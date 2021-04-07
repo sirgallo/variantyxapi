@@ -1,0 +1,89 @@
+#!/usr/bin/env node
+
+const app = require('../app')
+const debug = require('debug')('api:server')
+const http = require('http')
+
+const cluster = require('cluster')
+const os = require('os')
+
+//  Required for node-cluster, distributes work amongst threads
+const numOfCpus = os.cpus().length
+
+//  Workers for node-cluster
+let workers = []
+
+const normalizePort = (val) => {
+    const port = parseInt(val, 10)
+  
+    if (isNaN(port)) {
+        return val
+    }
+    if (port >= 0) {
+        return port
+    }
+  
+    return false
+}
+
+//  Start server with workers
+const setUpExpress = () => {
+    app.server = http.createServer(app)
+  
+    app.server.listen(port, () => {
+        console.log(`Worker ${process.pid} listening on port ${port}`)
+    })
+
+    app.on('error', (appErr, appCtx) => {
+        console.error('app error', appErr.stack);
+        console.error('on url', appCtx.req.url);
+        console.error('with headers', appCtx.req.headers);
+    })  
+}
+
+//  Initialize worker nodes, fork based on number of CPUs available
+const setUpWorkers = () => {
+    console.log(`Welcome to Variantyx Code Challenge API, version ${process.env.VERSION}`)
+    console.log('')
+    console.log(`Master node setting up ${numOfCpus} workers.`)
+    console.log('')
+
+    for(let cpu = 0; cpu < numOfCpus; cpu++) {
+        workers.push(cluster.fork())
+        
+        workers[cpu].on('message', message => {
+            console.log(message)
+        })
+    }
+
+    cluster.on('online', worker => {
+        console.log(`Worker ${worker.process.pid} is online.`)
+    })
+
+    cluster.on('exit', (worker, code, signal) => {
+        console.log(`Worker ${worker.process.pid} died with code ${code} and ${signal}.`)
+        console.log('Starting new worker.')
+        cluster.fork()
+        workers.push(cluster.fork())
+        workers[workers.length - 1].on('message', message => {
+            console.log(message)
+        })
+    })
+
+}
+
+//  set up the worker nodes of the cluster
+const setUpServer = (isClusterRequired) => {
+    if(isClusterRequired && cluster.isMaster) {
+        setUpWorkers()
+    }
+    else {
+        setUpExpress()
+    }
+}
+
+//  Specify in .env
+const port = normalizePort(process.env.PORT || '2022')
+app.set('port', port)
+
+setUpServer(true)
